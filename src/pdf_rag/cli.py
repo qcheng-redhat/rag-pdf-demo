@@ -1,34 +1,46 @@
 import argparse
-import os
 from pathlib import Path
 
-from pdf_rag.rag import ask, index_folder
+from pdf_rag import config
+from pdf_rag.chat import ask
+from pdf_rag.rag import index_folder
 
 
-def _embed_backend_arg(p) -> None:
+def _shared_parent() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(add_help=False)
+    p.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Chroma persist directory (default: ./.pdf_rag_chroma or $PDF_RAG_DB).",
+    )
     p.add_argument(
         "--embed-backend",
         choices=("local", "openai"),
         default=None,
-        help="Chunk embeddings: local (sentence-transformers, default) or openai. "
+        help="Chunk embeddings: openai (default) or local (sentence-transformers). "
         "Override: $PDF_RAG_EMBED_BACKEND. Must match how the DB was built.",
     )
-
-
-def default_persist_dir() -> Path:
-    env = os.environ.get("PDF_RAG_DB")
-    if env:
-        return Path(env).expanduser().resolve()
-    return Path.cwd() / ".pdf_rag_chroma"
+    return p
 
 
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="Index PDFs and ask questions (Chroma; local or OpenAI embeddings, OpenAI chat)."
+        description=(
+            "Index PDFs and ask questions (Chroma). "
+            "Embeddings via OpenAI-compatible API (defaults) or "
+            "--embed-backend local. "
+            "Override embedding host/key: PDF_RAG_EMBEDDINGS_BASE_URL / "
+            "PDF_RAG_EMBEDDINGS_API_KEY; chat in ask(): PDF_RAG_CHAT_* or OPENAI_*."
+        )
     )
     sub = p.add_subparsers(dest="cmd", required=True)
+    parent = _shared_parent()
 
-    pi = sub.add_parser("index", help="Embed all *.pdf in a folder into the local vector DB.")
+    pi = sub.add_parser(
+        "index", parents=[parent],
+        help="Embed all *.pdf in a folder into the local vector DB.",
+    )
     pi.add_argument(
         "--pdf-dir",
         type=Path,
@@ -36,36 +48,25 @@ def main() -> None:
         help="Directory containing PDF files.",
     )
     pi.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="Chroma persist directory (default: ./.pdf_rag_chroma or $PDF_RAG_DB).",
-    )
-    pi.add_argument(
         "--reset",
         action="store_true",
         help="Delete existing DB at --db before indexing.",
     )
-    _embed_backend_arg(pi)
 
-    pa = sub.add_parser("ask", help="Retrieve context and answer with the chat model.")
-    pa.add_argument("question", type=str, help="Your question.")
-    pa.add_argument(
-        "--db",
-        type=Path,
-        default=None,
-        help="Chroma persist directory (default: ./.pdf_rag_chroma or $PDF_RAG_DB).",
+    pa = sub.add_parser(
+        "ask", parents=[parent],
+        help="Retrieve context and answer with the chat model.",
     )
+    pa.add_argument("question", type=str, help="Your question.")
     pa.add_argument(
         "--top-k",
         type=int,
         default=5,
         help="Number of chunks to retrieve.",
     )
-    _embed_backend_arg(pa)
 
     args = p.parse_args()
-    db = (args.db or default_persist_dir()).resolve()
+    db = config.persist_dir(args.db)
 
     if args.cmd == "index":
         pdf_dir = args.pdf_dir.expanduser().resolve()
